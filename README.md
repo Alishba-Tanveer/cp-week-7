@@ -1,19 +1,35 @@
-## Week 7 — Assignment 1: System Design
+# Week 7 — Assignment 2: REST API Contract
 
-This assignment documents the system design for the Task Management Platform and prepares the architecture for Phase 4 (NestJS backend).
+## Overview
 
-### Included
+This assignment defines the REST API contract for the Task Management Platform that will be implemented in Phase 4.
 
-* System overview, functional requirements, and non-functional requirements
-* Complete ERD for the fixed 7-table PostgreSQL schema
-* Layered architecture: Client → API → Service → Repository → Database
-* Create-task request flow and failure/error mapping
-* Caching, scaling, replication, and consistency strategy
-* Architecture trade-offs and design decisions
-* Sequence diagram for task creation
-* State management and authorization strategy
-* Future denormalization strategy for `comment_count`
+The API specification is documented in `api-spec.md` and is based on the fixed seven-table PostgreSQL domain defined in Assignment 1.
 
-### Deliverable
+## Included
 
-* `DESIGN.md` — Complete system design document for Assignment 1
+* Complete `tasks` resource with:
+
+  * Create task
+  * List tasks
+  * Get one task
+  * Update task
+  * Delete task
+* Common pagination, filtering, and sorting convention
+* Users and projects endpoints
+* Nested project member endpoints
+* Tags and task-tag operations
+* Nested task comment endpoints
+* Authentication endpoints:
+
+  * Register
+  * Login
+  * Refresh
+  * Logout
+* Standard error response contract
+* API versioning using `/api/v1`
+* Authentication and role-based authorization requirements
+* HTTP status codes and REST semantics
+* Optional idempotency design for task creation
+* Status-code and security considerations
+* OpenAPI 3.1 documentation direction

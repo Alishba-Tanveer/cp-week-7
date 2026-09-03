@@ -1,0 +1,1870 @@
+openapi: 3.1.0
+
+info:
+title: Task Management Platform API
+version: 1.0.0
+description: |
+REST API contract for the Phase 4 Task Management Platform backend.
+
+The business domain contains the fixed Week 5/6 tables:
+users, projects, project_members, tasks, tags, task_tags, and comments.
+
+Phase 4 authentication may add password_hash to users and a
+refresh_tokens persistence mechanism. These authentication details
+do not change the seven-table business domain.
+
+All application routes use the /api/v1 version prefix.
+
+Authentication uses JWT access tokens. Authorization is based on
+project-level membership roles: owner, admin, member, and viewer.
+
+Pagination uses 1-based offset pagination.
+Default page size is 20 and maximum page size is 100.
+
+Timestamps use ISO 8601 UTC date-time values.
+Date-only values such as dueDate use YYYY-MM-DD.
+
+servers:
+
+* url: http://localhost:3000
+  description: Local development server
+
+security:
+
+* bearerAuth: []
+
+tags:
+
+* name: Authentication
+  description: Registration, login, refresh, and logout
+* name: Users
+  description: User profile and account operations
+* name: Projects
+  description: Project operations
+* name: Project Members
+  description: Project membership and roles
+* name: Tasks
+  description: Task operations
+* name: Task Tags
+  description: Task/tag relationship operations
+* name: Tags
+  description: Global tag operations
+* name: Comments
+  description: Task comment operations
+
+paths:
+
+/api/v1/auth/register:
+post:
+tags: [Authentication]
+summary: Register a new user
+description: |
+Public registration endpoint. The password is processed by the
+authentication layer and its hash is never returned.
+security: []
+operationId: registerUser
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/RegisterRequest'
+responses:
+'201':
+description: User registered successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/AuthResponse'
+'400':
+$ref: '#/components/responses/BadRequest'
+'409':
+$ref: '#/components/responses/Conflict'
+
+/api/v1/auth/login:
+post:
+tags: [Authentication]
+summary: Login
+description: Authenticates a user using email and password.
+security: []
+operationId: loginUser
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/LoginRequest'
+responses:
+'200':
+description: Login successful
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/AuthResponse'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+
+/api/v1/auth/refresh:
+post:
+tags: [Authentication]
+summary: Refresh access token
+description: |
+Exchanges a valid refresh token for a new access-token and
+refresh-token pair. Refresh-token rotation is required.
+security: []
+operationId: refreshAccessToken
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/RefreshRequest'
+responses:
+'200':
+description: Tokens refreshed successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/TokenPair'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+
+/api/v1/auth/logout:
+post:
+tags: [Authentication]
+summary: Logout
+description: Revokes the supplied refresh token.
+operationId: logoutUser
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/LogoutRequest'
+responses:
+'204':
+description: Logout successful. No response body.
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+
+/api/v1/users:
+get:
+tags: [Users]
+summary: List users
+description: |
+Returns basic user profiles. Authentication secrets are never
+returned.
+operationId: listUsers
+parameters:
+- $ref: '#/components/parameters/Page'
+- $ref: '#/components/parameters/PageSize'
+- $ref: '#/components/parameters/UserSort'
+responses:
+'200':
+description: Paginated users
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/PagedUsers'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+
+/api/v1/users/{id}:
+get:
+tags: [Users]
+summary: Get user
+operationId: getUser
+parameters:
+- $ref: '#/components/parameters/Id'
+responses:
+'200':
+description: User returned successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/User'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'404':
+$ref: '#/components/responses/NotFound'
+
+patch:
+  tags: [Users]
+  summary: Update own profile
+  description: |
+    Only the authenticated user's own profile may be updated.
+    API v1 permits changing name. Email is immutable.
+  operationId: updateOwnUser
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/components/schemas/UpdateUserRequest'
+  responses:
+    '200':
+      description: User updated successfully
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/User'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+delete:
+  tags: [Users]
+  summary: Delete own account
+  description: |
+    Only the authenticated user's own account may be deleted.
+
+    Project memberships are removed according to the relationship
+    rules. A user who owns a project or is still referenced by
+    required comment authorship cannot be deleted until those
+    relationships are resolved.
+  operationId: deleteOwnUser
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  responses:
+    '204':
+      description: User deleted successfully. No response body.
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+    '409':
+      $ref: '#/components/responses/Conflict'
+
+/api/v1/projects:
+post:
+tags: [Projects]
+summary: Create project
+description: |
+Creates a project and atomically creates the authenticated
+user's owner membership. projects.ownerId and the owner
+project_members row must remain consistent.
+operationId: createProject
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/CreateProjectRequest'
+responses:
+'201':
+description: Project created successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/Project'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+
+get:
+  tags: [Projects]
+  summary: List accessible projects
+  description: |
+    Returns only projects for which the authenticated user has
+    project membership.
+  operationId: listProjects
+  parameters:
+    - $ref: '#/components/parameters/Page'
+    - $ref: '#/components/parameters/PageSize'
+    - $ref: '#/components/parameters/ProjectSort'
+  responses:
+    '200':
+      description: Paginated accessible projects
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PagedProjects'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+
+/api/v1/projects/{id}:
+get:
+tags: [Projects]
+summary: Get project
+description: User must be a member of the project.
+operationId: getProject
+parameters:
+- $ref: '#/components/parameters/Id'
+responses:
+'200':
+description: Project returned successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/Project'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+
+patch:
+  tags: [Projects]
+  summary: Update project
+  description: |
+    Only project owners and admins may update the project.
+    ownerId is immutable through this endpoint.
+  operationId: updateProject
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/components/schemas/UpdateProjectRequest'
+  responses:
+    '200':
+      description: Project updated successfully
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Project'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+delete:
+  tags: [Projects]
+  summary: Delete project
+  description: |
+    Only project owners and admins may delete a project.
+
+    Deleting a project cascades to project memberships and tasks.
+    Deleting those tasks cascades to task-tag relationships and
+    comments.
+  operationId: deleteProject
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  responses:
+    '204':
+      description: Project deleted successfully. No response body.
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+/api/v1/projects/{id}/members:
+post:
+tags: [Project Members]
+summary: Add project member
+description: |
+Only owners and admins may add members. The owner role cannot
+be assigned through this endpoint.
+operationId: addProjectMember
+parameters:
+- $ref: '#/components/parameters/Id'
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/AddProjectMemberRequest'
+responses:
+'201':
+description: Project member added successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/ProjectMember'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+'409':
+$ref: '#/components/responses/Conflict'
+
+get:
+  tags: [Project Members]
+  summary: List project members
+  description: Any project member may list project members.
+  operationId: listProjectMembers
+  parameters:
+    - $ref: '#/components/parameters/Id'
+    - $ref: '#/components/parameters/Page'
+    - $ref: '#/components/parameters/PageSize'
+    - $ref: '#/components/parameters/ProjectMemberSort'
+  responses:
+    '200':
+      description: Paginated project members
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PagedProjectMembers'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+/api/v1/projects/{id}/members/{userId}:
+patch:
+tags: [Project Members]
+summary: Update project member role
+description: |
+Only owners and admins may update roles. Valid target roles are
+admin, member, and viewer. The canonical owner cannot be demoted.
+operationId: updateProjectMemberRole
+parameters:
+- $ref: '#/components/parameters/Id'
+- $ref: '#/components/parameters/UserId'
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/UpdateProjectMemberRequest'
+responses:
+'200':
+description: Project member role updated successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/ProjectMember'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+'409':
+$ref: '#/components/responses/Conflict'
+
+delete:
+  tags: [Project Members]
+  summary: Remove project member
+  description: |
+    Only owners and admins may remove members. The canonical project
+    owner cannot be removed.
+  operationId: removeProjectMember
+  parameters:
+    - $ref: '#/components/parameters/Id'
+    - $ref: '#/components/parameters/UserId'
+  responses:
+    '204':
+      description: Project member removed successfully. No response body.
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+    '409':
+      $ref: '#/components/responses/Conflict'
+
+/api/v1/tasks:
+post:
+tags: [Tasks]
+summary: Create task
+description: |
+Owners, admins, and members may create tasks in projects they
+belong to. Viewers cannot create tasks.
+
+    If an assignee is supplied, the user must exist.
+    If tagIds are supplied, every tag must exist.
+  operationId: createTask
+  parameters:
+    - $ref: '#/components/parameters/IdempotencyKey'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/components/schemas/CreateTaskRequest'
+  responses:
+    '201':
+      description: Task created successfully
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Task'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+    '409':
+      $ref: '#/components/responses/Conflict'
+
+get:
+  tags: [Tasks]
+  summary: List accessible tasks
+  description: |
+    Returns tasks only from projects accessible to the authenticated
+    user.
+
+    Supported filters are projectId, assigneeId, tagId, and status.
+
+    Sorting is whitelist-based and id ascending is used as the final
+    deterministic tie-breaker.
+  operationId: listTasks
+  parameters:
+    - $ref: '#/components/parameters/Page'
+    - $ref: '#/components/parameters/PageSize'
+    - $ref: '#/components/parameters/TaskProjectId'
+    - $ref: '#/components/parameters/TaskAssigneeId'
+    - $ref: '#/components/parameters/TaskTagId'
+    - $ref: '#/components/parameters/TaskStatus'
+    - $ref: '#/components/parameters/TaskSort'
+  responses:
+    '200':
+      description: Paginated accessible tasks
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PagedTasks'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+
+/api/v1/tasks/{id}:
+get:
+tags: [Tasks]
+summary: Get task
+description: User must be a member of the task's project.
+operationId: getTask
+parameters:
+- $ref: '#/components/parameters/Id'
+responses:
+'200':
+description: Task returned successfully
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/Task'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+
+patch:
+  tags: [Tasks]
+  summary: Update task
+  description: |
+    Owners, admins, and members may update tasks.
+    projectId is immutable.
+    tagIds, when supplied, replace the complete task-tag set.
+  operationId: updateTask
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/components/schemas/UpdateTaskRequest'
+  responses:
+    '200':
+      description: Task updated successfully
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Task'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+    '409':
+      $ref: '#/components/responses/Conflict'
+
+delete:
+  tags: [Tasks]
+  summary: Delete task
+  description: |
+    Only owners and admins may delete tasks.
+    Task deletion cascades to task_tags and comments.
+  operationId: deleteTask
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  responses:
+    '204':
+      description: Task deleted successfully. No response body.
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+/api/v1/tasks/{taskId}/tags:
+get:
+tags: [Task Tags]
+summary: List tags assigned to task
+description: User must be a member of the task's project.
+operationId: listTaskTags
+parameters:
+- $ref: '#/components/parameters/TaskId'
+responses:
+'200':
+description: Tags assigned to task
+content:
+application/json:
+schema:
+type: array
+items:
+$ref: '#/components/schemas/Tag'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+
+post:
+  tags: [Task Tags]
+  summary: Add tag to task
+  description: |
+    Owners, admins, and members may add existing tags to a task.
+    Adding an existing association returns 409.
+  operationId: addTaskTag
+  parameters:
+    - $ref: '#/components/parameters/TaskId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/components/schemas/AddTaskTagRequest'
+  responses:
+    '201':
+      description: Task-tag association created
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TaskTag'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+    '409':
+      $ref: '#/components/responses/Conflict'
+
+/api/v1/tasks/{taskId}/tags/{tagId}:
+delete:
+tags: [Task Tags]
+summary: Remove tag from task
+description: Removes only the association; the tag itself is not deleted.
+operationId: removeTaskTag
+parameters:
+- $ref: '#/components/parameters/TaskId'
+- $ref: '#/components/parameters/TagId'
+responses:
+'204':
+description: Task-tag association removed
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+
+/api/v1/tags:
+post:
+tags: [Tags]
+summary: Create global tag
+description: Any authenticated user may create global tags.
+operationId: createTag
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/CreateTagRequest'
+responses:
+'201':
+description: Tag created
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/Tag'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'409':
+$ref: '#/components/responses/Conflict'
+
+get:
+  tags: [Tags]
+  summary: List global tags
+  operationId: listTags
+  parameters:
+    - $ref: '#/components/parameters/Page'
+    - $ref: '#/components/parameters/PageSize'
+    - $ref: '#/components/parameters/TagSort'
+  responses:
+    '200':
+      description: Paginated tags
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PagedTags'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+
+/api/v1/tags/{id}:
+get:
+tags: [Tags]
+summary: Get tag
+operationId: getTag
+parameters:
+- $ref: '#/components/parameters/Id'
+responses:
+'200':
+description: Tag returned
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/Tag'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'404':
+$ref: '#/components/responses/NotFound'
+
+patch:
+  tags: [Tags]
+  summary: Update tag
+  description: Any authenticated user may update a global tag.
+  operationId: updateTag
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/components/schemas/UpdateTagRequest'
+  responses:
+    '200':
+      description: Tag updated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Tag'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '404':
+      $ref: '#/components/responses/NotFound'
+    '409':
+      $ref: '#/components/responses/Conflict'
+
+delete:
+  tags: [Tags]
+  summary: Delete tag
+  description: |
+    A tag that is still referenced by task_tags cannot be deleted
+    because the fixed relationship is non-cascading.
+  operationId: deleteTag
+  parameters:
+    - $ref: '#/components/parameters/Id'
+  responses:
+    '204':
+      description: Tag deleted
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '404':
+      $ref: '#/components/responses/NotFound'
+    '409':
+      $ref: '#/components/responses/Conflict'
+
+/api/v1/tasks/{taskId}/comments:
+post:
+tags: [Comments]
+summary: Create comment
+description: |
+Any project member may create a comment, including viewers.
+authorId is assigned from the authenticated identity and is not
+accepted from the client.
+operationId: createComment
+parameters:
+- $ref: '#/components/parameters/TaskId'
+requestBody:
+required: true
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/CreateCommentRequest'
+responses:
+'201':
+description: Comment created
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/Comment'
+'400':
+$ref: '#/components/responses/BadRequest'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+
+get:
+  tags: [Comments]
+  summary: List task comments
+  description: Any project member may list comments.
+  operationId: listTaskComments
+  parameters:
+    - $ref: '#/components/parameters/TaskId'
+    - $ref: '#/components/parameters/Page'
+    - $ref: '#/components/parameters/PageSize'
+    - $ref: '#/components/parameters/CommentSort'
+  responses:
+    '200':
+      description: Paginated comments
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PagedComments'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+/api/v1/tasks/{taskId}/comments/{commentId}:
+get:
+tags: [Comments]
+summary: Get comment
+description: Any project member may retrieve the comment.
+operationId: getComment
+parameters:
+- $ref: '#/components/parameters/TaskId'
+- $ref: '#/components/parameters/CommentId'
+responses:
+'200':
+description: Comment returned
+content:
+application/json:
+schema:
+$ref: '#/components/schemas/Comment'
+'401':
+$ref: '#/components/responses/Unauthorized'
+'403':
+$ref: '#/components/responses/Forbidden'
+'404':
+$ref: '#/components/responses/NotFound'
+
+patch:
+  tags: [Comments]
+  summary: Update own comment
+  description: Only the comment author may update a comment.
+  operationId: updateComment
+  parameters:
+    - $ref: '#/components/parameters/TaskId'
+    - $ref: '#/components/parameters/CommentId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/components/schemas/UpdateCommentRequest'
+  responses:
+    '200':
+      description: Comment updated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Comment'
+    '400':
+      $ref: '#/components/responses/BadRequest'
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+delete:
+  tags: [Comments]
+  summary: Delete comment
+  description: |
+    Comment authors, project owners, and project admins may delete
+    comments.
+  operationId: deleteComment
+  parameters:
+    - $ref: '#/components/parameters/TaskId'
+    - $ref: '#/components/parameters/CommentId'
+  responses:
+    '204':
+      description: Comment deleted
+    '401':
+      $ref: '#/components/responses/Unauthorized'
+    '403':
+      $ref: '#/components/responses/Forbidden'
+    '404':
+      $ref: '#/components/responses/NotFound'
+
+components:
+
+securitySchemes:
+bearerAuth:
+type: http
+scheme: bearer
+bearerFormat: JWT
+description: |
+JWT access token supplied using:
+Authorization: Bearer <access-token>
+
+parameters:
+
+Id:
+  name: id
+  in: path
+  required: true
+  description: Numeric resource identifier.
+  schema:
+    type: integer
+    minimum: 1
+
+UserId:
+  name: userId
+  in: path
+  required: true
+  description: Numeric user identifier.
+  schema:
+    type: integer
+    minimum: 1
+
+TaskId:
+  name: taskId
+  in: path
+  required: true
+  description: Numeric task identifier.
+  schema:
+    type: integer
+    minimum: 1
+
+TagId:
+  name: tagId
+  in: path
+  required: true
+  description: Numeric tag identifier.
+  schema:
+    type: integer
+    minimum: 1
+
+CommentId:
+  name: commentId
+  in: path
+  required: true
+  description: Numeric comment identifier.
+  schema:
+    type: integer
+    minimum: 1
+
+Page:
+  name: page
+  in: query
+  required: false
+  description: 1-based page number.
+  schema:
+    type: integer
+    minimum: 1
+    default: 1
+
+PageSize:
+  name: pageSize
+  in: query
+  required: false
+  description: Number of records per page. Maximum is 100.
+  schema:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 20
+
+TaskProjectId:
+  name: projectId
+  in: query
+  required: false
+  description: Filter tasks by an accessible project ID.
+  schema:
+    type: integer
+    minimum: 1
+
+TaskAssigneeId:
+  name: assigneeId
+  in: query
+  required: false
+  description: Filter tasks by assignee user ID.
+  schema:
+    type: integer
+    minimum: 1
+
+TaskTagId:
+  name: tagId
+  in: query
+  required: false
+  description: Filter tasks by associated tag ID.
+  schema:
+    type: integer
+    minimum: 1
+
+TaskStatus:
+  name: status
+  in: query
+  required: false
+  description: Filter tasks by status.
+  schema:
+    type: string
+    enum:
+      - todo
+      - in_progress
+      - done
+
+TaskSort:
+  name: sort
+  in: query
+  required: false
+  description: |
+    Whitelisted task sorting field. Prefix '-' for descending order.
+    id ascending is used as the final tie-breaker.
+  schema:
+    type: string
+    enum:
+      - id
+      - -id
+      - createdAt
+      - -createdAt
+      - title
+      - -title
+      - priority
+      - -priority
+      - dueDate
+      - -dueDate
+      - status
+      - -status
+    default: -createdAt
+
+UserSort:
+  name: sort
+  in: query
+  required: false
+  description: Whitelisted user sorting field.
+  schema:
+    type: string
+    enum:
+      - id
+      - -id
+      - name
+      - -name
+      - email
+      - -email
+      - createdAt
+      - -createdAt
+    default: id
+
+ProjectSort:
+  name: sort
+  in: query
+  required: false
+  description: Whitelisted project sorting field.
+  schema:
+    type: string
+    enum:
+      - id
+      - -id
+      - name
+      - -name
+      - createdAt
+      - -createdAt
+    default: id
+
+ProjectMemberSort:
+  name: sort
+  in: query
+  required: false
+  description: Whitelisted project-member sorting field.
+  schema:
+    type: string
+    enum:
+      - userId
+      - -userId
+      - role
+      - -role
+    default: userId
+
+TagSort:
+  name: sort
+  in: query
+  required: false
+  description: Whitelisted tag sorting field.
+  schema:
+    type: string
+    enum:
+      - id
+      - -id
+      - name
+      - -name
+    default: name
+
+CommentSort:
+  name: sort
+  in: query
+  required: false
+  description: Whitelisted comment sorting field.
+  schema:
+    type: string
+    enum:
+      - id
+      - -id
+      - createdAt
+      - -createdAt
+    default: createdAt
+
+IdempotencyKey:
+  name: Idempotency-Key
+  in: header
+  required: false
+  description: |
+    Client-generated key for safely retrying task creation.
+
+    The key is scoped to the authenticated user, HTTP operation,
+    and route.
+
+    Successful results are retained for 24 hours.
+
+    Reusing the same key with the same request returns the original
+    successful result without creating another task.
+
+    Reusing the same key with a different payload returns 409 Conflict.
+  schema:
+    type: string
+    minLength: 1
+    maxLength: 255
+
+schemas:
+
+User:
+  type: object
+  additionalProperties: false
+  required:
+    - id
+    - name
+    - email
+    - createdAt
+  properties:
+    id:
+      type: integer
+      minimum: 1
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+    email:
+      type: string
+      format: email
+      maxLength: 255
+    createdAt:
+      type: string
+      format: date-time
+
+UpdateUserRequest:
+  type: object
+  additionalProperties: false
+  minProperties: 1
+  required:
+    - name
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+
+Project:
+  type: object
+  additionalProperties: false
+  required:
+    - id
+    - name
+    - ownerId
+    - createdAt
+  properties:
+    id:
+      type: integer
+      minimum: 1
+    name:
+      type: string
+      minLength: 1
+      maxLength: 150
+    ownerId:
+      type: integer
+      minimum: 1
+    createdAt:
+      type: string
+      format: date-time
+
+CreateProjectRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - name
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 150
+
+UpdateProjectRequest:
+  type: object
+  additionalProperties: false
+  minProperties: 1
+  required:
+    - name
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 150
+
+Task:
+  type: object
+  additionalProperties: false
+  required:
+    - id
+    - title
+    - description
+    - status
+    - priority
+    - projectId
+    - assigneeId
+    - dueDate
+    - createdAt
+    - tags
+  properties:
+    id:
+      type: integer
+      minimum: 1
+    title:
+      type: string
+      minLength: 1
+      maxLength: 255
+    description:
+      type:
+        - string
+        - 'null'
+      maxLength: 5000
+    status:
+      type: string
+      enum:
+        - todo
+        - in_progress
+        - done
+    priority:
+      type: integer
+      minimum: 1
+      maximum: 5
+    projectId:
+      type: integer
+      minimum: 1
+    assigneeId:
+      type:
+        - integer
+        - 'null'
+      minimum: 1
+    dueDate:
+      type:
+        - string
+        - 'null'
+      format: date
+    createdAt:
+      type: string
+      format: date-time
+    tags:
+      type: array
+      items:
+        $ref: '#/components/schemas/Tag'
+
+CreateTaskRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - title
+    - status
+    - priority
+    - projectId
+  properties:
+    title:
+      type: string
+      minLength: 1
+      maxLength: 255
+    description:
+      type:
+        - string
+        - 'null'
+      maxLength: 5000
+    status:
+      type: string
+      enum:
+        - todo
+        - in_progress
+        - done
+    priority:
+      type: integer
+      minimum: 1
+      maximum: 5
+    projectId:
+      type: integer
+      minimum: 1
+    assigneeId:
+      type:
+        - integer
+        - 'null'
+      minimum: 1
+    dueDate:
+      type:
+        - string
+        - 'null'
+      format: date
+    tagIds:
+      type: array
+      uniqueItems: true
+      items:
+        type: integer
+        minimum: 1
+
+UpdateTaskRequest:
+  type: object
+  additionalProperties: false
+  minProperties: 1
+  properties:
+    title:
+      type: string
+      minLength: 1
+      maxLength: 255
+    description:
+      type:
+        - string
+        - 'null'
+      maxLength: 5000
+    status:
+      type: string
+      enum:
+        - todo
+        - in_progress
+        - done
+    priority:
+      type: integer
+      minimum: 1
+      maximum: 5
+    assigneeId:
+      type:
+        - integer
+        - 'null'
+      minimum: 1
+    dueDate:
+      type:
+        - string
+        - 'null'
+      format: date
+    tagIds:
+      type: array
+      uniqueItems: true
+      items:
+        type: integer
+        minimum: 1
+
+Tag:
+  type: object
+  additionalProperties: false
+  required:
+    - id
+    - name
+  properties:
+    id:
+      type: integer
+      minimum: 1
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+
+CreateTagRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - name
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+
+UpdateTagRequest:
+  type: object
+  additionalProperties: false
+  minProperties: 1
+  required:
+    - name
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+
+ProjectMember:
+  type: object
+  additionalProperties: false
+  required:
+    - userId
+    - projectId
+    - role
+  properties:
+    userId:
+      type: integer
+      minimum: 1
+    projectId:
+      type: integer
+      minimum: 1
+    role:
+      type: string
+      enum:
+        - owner
+        - admin
+        - member
+        - viewer
+
+AddProjectMemberRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - userId
+    - role
+  properties:
+    userId:
+      type: integer
+      minimum: 1
+    role:
+      type: string
+      enum:
+        - admin
+        - member
+        - viewer
+
+UpdateProjectMemberRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - role
+  properties:
+    role:
+      type: string
+      enum:
+        - admin
+        - member
+        - viewer
+
+TaskTag:
+  type: object
+  additionalProperties: false
+  required:
+    - taskId
+    - tagId
+  properties:
+    taskId:
+      type: integer
+      minimum: 1
+    tagId:
+      type: integer
+      minimum: 1
+
+AddTaskTagRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - tagId
+  properties:
+    tagId:
+      type: integer
+      minimum: 1
+
+Comment:
+  type: object
+  additionalProperties: false
+  required:
+    - id
+    - taskId
+    - authorId
+    - body
+    - createdAt
+  properties:
+    id:
+      type: integer
+      minimum: 1
+    taskId:
+      type: integer
+      minimum: 1
+    authorId:
+      type: integer
+      minimum: 1
+    body:
+      type: string
+      minLength: 1
+      maxLength: 5000
+    createdAt:
+      type: string
+      format: date-time
+
+CreateCommentRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - body
+  properties:
+    body:
+      type: string
+      minLength: 1
+      maxLength: 5000
+
+UpdateCommentRequest:
+  type: object
+  additionalProperties: false
+  minProperties: 1
+  required:
+    - body
+  properties:
+    body:
+      type: string
+      minLength: 1
+      maxLength: 5000
+
+RegisterRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - name
+    - email
+    - password
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 100
+    email:
+      type: string
+      format: email
+      maxLength: 255
+    password:
+      type: string
+      format: password
+      minLength: 8
+      maxLength: 128
+
+LoginRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - email
+    - password
+  properties:
+    email:
+      type: string
+      format: email
+      maxLength: 255
+    password:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 128
+
+RefreshRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - refreshToken
+  properties:
+    refreshToken:
+      type: string
+      minLength: 1
+
+LogoutRequest:
+  type: object
+  additionalProperties: false
+  required:
+    - refreshToken
+  properties:
+    refreshToken:
+      type: string
+      minLength: 1
+
+TokenPair:
+  type: object
+  additionalProperties: false
+  required:
+    - accessToken
+    - refreshToken
+  properties:
+    accessToken:
+      type: string
+    refreshToken:
+      type: string
+
+AuthResponse:
+  type: object
+  additionalProperties: false
+  required:
+    - user
+    - accessToken
+    - refreshToken
+  properties:
+    user:
+      $ref: '#/components/schemas/User'
+    accessToken:
+      type: string
+    refreshToken:
+      type: string
+
+PagedResponse:
+  type: object
+  required:
+    - data
+    - total
+    - page
+    - pageSize
+    - totalPages
+    - hasNext
+    - hasPrevious
+  properties:
+    data:
+      type: array
+      items: {}
+    total:
+      type: integer
+      minimum: 0
+    page:
+      type: integer
+      minimum: 1
+    pageSize:
+      type: integer
+      minimum: 1
+      maximum: 100
+    totalPages:
+      type: integer
+      minimum: 0
+    hasNext:
+      type: boolean
+    hasPrevious:
+      type: boolean
+
+PagedUsers:
+  allOf:
+    - $ref: '#/components/schemas/PagedResponse'
+    - type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+
+PagedProjects:
+  allOf:
+    - $ref: '#/components/schemas/PagedResponse'
+    - type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+
+PagedTasks:
+  allOf:
+    - $ref: '#/components/schemas/PagedResponse'
+    - type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+
+PagedProjectMembers:
+  allOf:
+    - $ref: '#/components/schemas/PagedResponse'
+    - type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMember'
+
+PagedTags:
+  allOf:
+    - $ref: '#/components/schemas/PagedResponse'
+    - type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+
+PagedComments:
+  allOf:
+    - $ref: '#/components/schemas/PagedResponse'
+    - type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+
+Error:
+  type: object
+  additionalProperties: false
+  required:
+    - statusCode
+    - message
+    - error
+    - timestamp
+    - path
+  properties:
+    statusCode:
+      type: integer
+      minimum: 400
+      maximum: 599
+    message:
+      type: string
+    error:
+      type: string
+    timestamp:
+      type: string
+      format: date-time
+    path:
+      type: string
+
+responses:
+
+BadRequest:
+  description: Request is malformed or fails API validation.
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/Error'
+      example:
+        statusCode: 400
+        message: Validation failed
+        error: Bad Request
+        timestamp: "2026-09-03T10:00:00Z"
+        path: /api/v1/tasks
+
+Unauthorized:
+  description: |
+    Authentication is missing, invalid, expired, revoked, or otherwise
+    unsuccessful.
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/Error'
+      example:
+        statusCode: 401
+        message: Invalid or expired authentication credentials
+        error: Unauthorized
+        timestamp: "2026-09-03T10:00:00Z"
+        path: /api/v1/tasks
+
+Forbidden:
+  description: |
+    The authenticated user does not have sufficient authorization.
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/Error'
+      example:
+        statusCode: 403
+        message: You do not have permission to perform this action
+        error: Forbidden
+        timestamp: "2026-09-03T10:00:00Z"
+        path: /api/v1/projects/1
+
+NotFound:
+  description: |
+    The requested resource does not exist or is outside the user's
+    authorized resource scope.
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/Error'
+      example:
+        statusCode: 404
+        message: Resource not found
+        error: Not Found
+        timestamp: "2026-09-03T10:00:00Z"
+        path: /api/v1/tasks/999
+
+Conflict:
+  description: |
+    The operation conflicts with uniqueness constraints, relationship
+    constraints, ownership rules, current resource state, or
+    idempotency rules.
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/Error'
+      example:
+        statusCode: 409
+        message: Resource already exists or operation conflicts with current state
+        error: Conflict
+        timestamp: "2026-09-03T10:00:00Z"
+        path: /api/v1/projects/1/members
